@@ -62,7 +62,9 @@ void initShaders() {
     g_pGlobalState->shader.program                             = prog;
     g_pGlobalState->shader.uniformLocations[SHADER_PROJ]       = glGetUniformLocation(prog, "proj");
     g_pGlobalState->shader.uniformLocations[SHADER_POS_ATTRIB] = glGetAttribLocation(prog, "pos");
-    g_pGlobalState->shader.uniformLocations[SHADER_COLOR]      = glGetUniformLocation(prog, "color");
+    g_pGlobalState->shader.uniformLocations[SHADER_GRADIENT]   = glGetUniformLocation(prog, "quad");
+    g_pGlobalState->shader.uniformLocations[SHADER_TIME]       = glGetUniformLocation(prog, "progress");
+    g_pGlobalState->shader.uniformLocations[SHADER_FULL_SIZE]  = glGetUniformLocation(prog, "resolution");
 }
 
 static void onCloseWindow(void* self, SCallbackInfo& info, std::any data) {

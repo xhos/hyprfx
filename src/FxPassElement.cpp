@@ -32,14 +32,15 @@ void CFxPassElement::draw(const CRegion& damage) {
     glMatrix.transpose();
     g_pGlobalState->shader.setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, glMatrix.getMatrix());
 
-    float t     = data.progress;
-    float alpha = (1.0f - t) * (1.0f - t);
-    glUniform4f(shader.uniformLocations[SHADER_COLOR], 1.0f * alpha, 0.0f, 0.5f * alpha, alpha);
-
     float x1 = (data.box.x - PMONITOR->m_position.x) / PMONITOR->m_size.x;
     float y1 = (data.box.y - PMONITOR->m_position.y) / PMONITOR->m_size.y;
     float x2 = (data.box.x - PMONITOR->m_position.x + data.box.width) / PMONITOR->m_size.x;
     float y2 = (data.box.y - PMONITOR->m_position.y + data.box.height) / PMONITOR->m_size.y;
+
+    // quad bounds for UV computation in vertex shader
+    glUniform4f(shader.uniformLocations[SHADER_GRADIENT], x1, y1, x2, y2);
+    glUniform1f(shader.uniformLocations[SHADER_TIME], data.progress);
+    glUniform2f(shader.uniformLocations[SHADER_FULL_SIZE], data.box.width, data.box.height);
 
     float positions[] = {
         x1, y1, x2, y1, x1, y2, x2, y2,
