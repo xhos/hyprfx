@@ -6,15 +6,64 @@
 #include <hyprland/src/SharedDefs.hpp>
 
 #include "globals.hpp"
+#include "shaders.hpp"
 #include "FxPassElement.hpp"
 
 struct SWindowAnimation {
-    CBox                                  box;       // window position/size at time of close
+    CBox                                  box;
     std::chrono::steady_clock::time_point startTime;
-    float                                 duration = 1.0f; // seconds
+    float                                 duration = 2.0f;
 };
 
 static std::vector<SWindowAnimation> g_animations;
+
+GLuint                               compileShader(const GLuint& type, const std::string& src) {
+    auto shader       = glCreateShader(type);
+    auto shaderSource = src.c_str();
+
+    glShaderSource(shader, 1, (const GLchar**)&shaderSource, nullptr);
+    glCompileShader(shader);
+
+    GLint ok;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (ok == GL_FALSE)
+        throw std::runtime_error("[hyprfx] shader compilation failed");
+
+    return shader;
+}
+
+GLuint createProgram(const std::string& vert, const std::string& frag) {
+    auto vertCompiled = compileShader(GL_VERTEX_SHADER, vert);
+    auto fragCompiled = compileShader(GL_FRAGMENT_SHADER, frag);
+
+    auto prog = glCreateProgram();
+    glAttachShader(prog, vertCompiled);
+    glAttachShader(prog, fragCompiled);
+    glLinkProgram(prog);
+
+    glDetachShader(prog, vertCompiled);
+    glDetachShader(prog, fragCompiled);
+    glDeleteShader(vertCompiled);
+    glDeleteShader(fragCompiled);
+
+    GLint ok;
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (ok == GL_FALSE)
+        throw std::runtime_error("[hyprfx] shader linking failed");
+
+    return prog;
+}
+
+void initShaders() {
+    g_pHyprRenderer->makeEGLCurrent();
+
+    GLuint prog = createProgram(VERT, FRAG);
+
+    g_pGlobalState->shader.program                             = prog;
+    g_pGlobalState->shader.uniformLocations[SHADER_PROJ]       = glGetUniformLocation(prog, "proj");
+    g_pGlobalState->shader.uniformLocations[SHADER_POS_ATTRIB] = glGetAttribLocation(prog, "pos");
+    g_pGlobalState->shader.uniformLocations[SHADER_COLOR]      = glGetUniformLocation(prog, "color");
+}
 
 static void onCloseWindow(void* self, SCallbackInfo& info, std::any data) {
     auto window = std::any_cast<PHLWINDOW>(data);
@@ -27,7 +76,6 @@ static void onCloseWindow(void* self, SCallbackInfo& info, std::any data) {
     g_animations.push_back(SWindowAnimation{
         .box       = CBox{pos.x, pos.y, size.x, size.y},
         .startTime = std::chrono::steady_clock::now(),
-        .duration  = 1.0f,
     });
 }
 
@@ -39,22 +87,15 @@ static void onRenderStage(void* self, SCallbackInfo& info, std::any data) {
     if (g_animations.empty())
         return;
 
-    auto monitor = g_pHyprOpenGL->m_renderData.pMonitor.lock();
-    if (!monitor)
-        return;
-
     auto now = std::chrono::steady_clock::now();
 
     for (auto& anim : g_animations) {
         float elapsed  = std::chrono::duration<float>(now - anim.startTime).count();
         float progress = std::min(elapsed / anim.duration, 1.0f);
 
-        CBox monBox = {anim.box.x - monitor->m_position.x, anim.box.y - monitor->m_position.y, anim.box.width, anim.box.height};
-        monBox.scale(monitor->m_scale).round();
-
-        auto fxData = CFxPassElement::SFxData{
-            .box   = monBox,
-            .alpha = 1.0f - progress,
+        auto  fxData = CFxPassElement::SFxData{
+             .box      = anim.box,
+             .progress = progress,
         };
 
         g_pHyprRenderer->m_renderPass.add(makeUnique<CFxPassElement>(fxData));
@@ -64,14 +105,15 @@ static void onRenderStage(void* self, SCallbackInfo& info, std::any data) {
 static int onTick(void* data) {
     auto now = std::chrono::steady_clock::now();
 
+    for (auto& anim : g_animations) {
+        CBox dmg = {anim.box.x - 2, anim.box.y - 2, anim.box.width + 4, anim.box.height + 4};
+        g_pHyprRenderer->damageBox(dmg);
+    }
+
     std::erase_if(g_animations, [&](const SWindowAnimation& anim) {
         float elapsed = std::chrono::duration<float>(now - anim.startTime).count();
         return elapsed >= anim.duration;
     });
-
-    for (auto& anim : g_animations) {
-        g_pHyprRenderer->damageBox(anim.box);
-    }
 
     const int TIMEOUT = g_pHyprRenderer->m_mostHzMonitor ? 1000.0 / g_pHyprRenderer->m_mostHzMonitor->m_refreshRate : 16;
     wl_event_source_timer_update(g_pGlobalState->tick, TIMEOUT);
@@ -98,6 +140,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "render", onRenderStage);
 
     g_pGlobalState = makeUnique<SGlobalState>();
+    initShaders();
     g_pGlobalState->tick = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, &onTick, nullptr);
     wl_event_source_timer_update(g_pGlobalState->tick, 1);
 
@@ -109,4 +152,5 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     wl_event_source_remove(g_pGlobalState->tick);
     g_pHyprRenderer->m_renderPass.removeAllOfType("CFxPassElement");
+    g_pGlobalState->shader.destroy();
 }

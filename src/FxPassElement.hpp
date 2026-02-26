@@ -5,8 +5,8 @@
 class CFxPassElement : public IPassElement {
   public:
     struct SFxData {
-        CBox  box;   // where to render (monitor-local coords)
-        float alpha = 1.0f;
+        CBox  box; // global coords
+        float progress = 0;
     };
 
     CFxPassElement(const SFxData& data_);
