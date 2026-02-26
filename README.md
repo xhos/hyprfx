@@ -7,4 +7,4 @@ unlimited hyprland
 but no hyprland
 
 > [!CAUTION]
-> i don't know what im doing, use at your own risk
+> i don't know what im doing
