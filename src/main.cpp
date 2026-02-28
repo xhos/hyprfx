@@ -189,6 +189,18 @@ static void onCloseWindow(void* self, SCallbackInfo& info, std::any data) {
     });
 }
 
+static void clearAnimations() {
+    for (auto& anim : g_animations) {
+        if (anim.snapshotTex)
+            glDeleteTextures(1, &anim.snapshotTex);
+    }
+    g_animations.clear();
+}
+
+static void onWorkspace(void* self, SCallbackInfo& info, std::any data) {
+    clearAnimations();
+}
+
 static void onRenderStage(void* self, SCallbackInfo& info, std::any data) {
     auto stage = std::any_cast<eRenderStage>(data);
     if (stage != RENDER_POST_WINDOWS)
@@ -260,6 +272,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     static auto P1 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow", onCloseWindow);
     static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "render", onRenderStage);
+    static auto P3 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "workspace", onWorkspace);
 
     g_pGlobalState = makeUnique<SGlobalState>();
     initShaders();
@@ -275,11 +288,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     wl_event_source_remove(g_pGlobalState->tick);
     g_pHyprRenderer->m_renderPass.removeAllOfType("CFxPassElement");
-    for (auto& anim : g_animations) {
-        if (anim.snapshotTex)
-            glDeleteTextures(1, &anim.snapshotTex);
-    }
-    g_animations.clear();
+    clearAnimations();
     if (g_pGlobalState->shardTex)
         glDeleteTextures(1, &g_pGlobalState->shardTex);
     g_pGlobalState->shader.destroy();
