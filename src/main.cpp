@@ -7,6 +7,20 @@
 #include "globals.hpp"
 #include "shaders.hpp"
 #include "FxPassElement.hpp"
+#include <hyprland/src/protocols/XDGShell.hpp>
+#include <hyprland/src/xwayland/XSurface.hpp>
+
+// compile-time shader selection
+#define SHADER_BROKEN_GLASS 1
+#define SHADER_AURA_GLOW    0
+#define ACTIVE_SHADER       SHADER_AURA_GLOW
+
+// actor scale for effects that render beyond window bounds
+#if ACTIVE_SHADER == SHADER_BROKEN_GLASS
+static constexpr float ACTOR_SCALE = 2.0f;
+#else
+static constexpr float ACTOR_SCALE = 1.0f;
+#endif
 
 struct SWindowAnimation {
     CBox                                  box;
@@ -16,7 +30,6 @@ struct SWindowAnimation {
     int                                   texWidth    = 0;
     int                                   texHeight   = 0;
     float                                 rounding    = 0.f;
-    PHLWINDOW                             windowRef; // held until snapshot is captured
 };
 
 static std::vector<SWindowAnimation> g_animations;
@@ -61,7 +74,11 @@ GLuint createProgram(const std::string& vert, const std::string& frag) {
 void initShaders() {
     g_pHyprRenderer->makeEGLCurrent();
 
+#if ACTIVE_SHADER == SHADER_BROKEN_GLASS
+    GLuint prog = createProgram(VERT, FRAG_BROKEN_GLASS);
+#else
     GLuint prog = createProgram(VERT, FRAG);
+#endif
 
     g_pGlobalState->shader.program                             = prog;
     g_pGlobalState->shader.uniformLocations[SHADER_PROJ]       = glGetUniformLocation(prog, "proj");
@@ -73,6 +90,22 @@ void initShaders() {
     g_pGlobalState->shader.uniformLocations[SHADER_RADIUS]     = glGetUniformLocation(prog, "radius");
 }
 
+void initShardTexture() {
+    g_pHyprRenderer->makeEGLCurrent();
+
+    GLuint tex;
+    glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 512, 512, 0, GL_RGB, GL_UNSIGNED_BYTE, SHARD_TEX_DATA);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    g_pGlobalState->shardTex = tex;
+}
+
 static GLuint blitTextureToOwn(GLuint srcTexID, GLenum srcTarget, int w, int h) {
     GLuint snapTex;
     glGenTextures(1, &snapTex);
@@ -80,6 +113,10 @@ static GLuint blitTextureToOwn(GLuint srcTexID, GLenum srcTarget, int w, int h) 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    GLint prevReadFB, prevDrawFB;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevReadFB);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevDrawFB);
 
     GLuint readFbo, writeFbo;
     glGenFramebuffers(1, &readFbo);
@@ -93,11 +130,32 @@ static GLuint blitTextureToOwn(GLuint srcTexID, GLenum srcTarget, int w, int h) 
 
     glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, prevReadFB);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, prevDrawFB);
     glDeleteFramebuffers(1, &readFbo);
     glDeleteFramebuffers(1, &writeFbo);
 
     return snapTex;
+}
+
+static SP<CTexture> getSurfaceTexture(PHLWINDOW window) {
+    if (!window->m_xdgSurface.expired()) {
+        auto xdg = window->m_xdgSurface.lock();
+        if (xdg && !xdg->m_surface.expired()) {
+            auto surf = xdg->m_surface.lock();
+            if (surf && surf->m_current.texture)
+                return surf->m_current.texture;
+        }
+    }
+    if (!window->m_xwaylandSurface.expired()) {
+        auto xsurf = window->m_xwaylandSurface.lock();
+        if (xsurf && !xsurf->m_surface.expired()) {
+            auto surf = xsurf->m_surface.lock();
+            if (surf && surf->m_current.texture)
+                return surf->m_current.texture;
+        }
+    }
+    return nullptr;
 }
 
 static void onCloseWindow(void* self, SCallbackInfo& info, std::any data) {
@@ -105,14 +163,29 @@ static void onCloseWindow(void* self, SCallbackInfo& info, std::any data) {
     if (!window)
         return;
 
+    g_pHyprRenderer->makeEGLCurrent();
+
+    GLuint snapTex = 0;
+    int    tw = 0, th = 0;
+
+    // capture surface texture directly while it's still valid
+    auto surfTex = getSurfaceTexture(window);
+    if (surfTex && surfTex->m_texID > 0 && surfTex->m_size.x > 0) {
+        tw      = (int)surfTex->m_size.x;
+        th      = (int)surfTex->m_size.y;
+        snapTex = blitTextureToOwn(surfTex->m_texID, surfTex->m_target, tw, th);
+    }
+
     auto pos  = window->m_position;
     auto size = window->m_size;
 
     g_animations.push_back(SWindowAnimation{
-        .box       = CBox{pos.x, pos.y, size.x, size.y},
-        .startTime = std::chrono::steady_clock::now(),
-        .rounding  = window->rounding(),
-        .windowRef = window,
+        .box         = CBox{pos.x, pos.y, size.x, size.y},
+        .startTime   = std::chrono::steady_clock::now(),
+        .snapshotTex = snapTex,
+        .texWidth    = tw,
+        .texHeight   = th,
+        .rounding    = window->rounding(),
     });
 }
 
@@ -127,25 +200,6 @@ static void onRenderStage(void* self, SCallbackInfo& info, std::any data) {
     auto now = std::chrono::steady_clock::now();
 
     for (auto& anim : g_animations) {
-        // capture snapshot on first render frame
-        if (!anim.snapshotTex && anim.windowRef) {
-            g_pHyprRenderer->makeSnapshot(anim.windowRef);
-
-            auto it = g_pHyprOpenGL->m_windowFramebuffers.find(anim.windowRef);
-            if (it != g_pHyprOpenGL->m_windowFramebuffers.end()) {
-                auto fbTex = it->second.getTexture();
-                if (fbTex && fbTex->m_texID > 0 && fbTex->m_size.x > 0) {
-                    int tw           = (int)fbTex->m_size.x;
-                    int th           = (int)fbTex->m_size.y;
-                    anim.snapshotTex = blitTextureToOwn(fbTex->m_texID, GL_TEXTURE_2D, tw, th);
-                    anim.texWidth    = tw;
-                    anim.texHeight   = th;
-                }
-            }
-
-            anim.windowRef.reset(); // release window reference
-        }
-
         float elapsed  = std::chrono::duration<float>(now - anim.startTime).count();
         float progress = std::min(elapsed / anim.duration, 1.0f);
 
@@ -154,6 +208,8 @@ static void onRenderStage(void* self, SCallbackInfo& info, std::any data) {
              .progress    = progress,
              .snapshotTex = anim.snapshotTex,
              .rounding    = anim.rounding,
+             .shardTex    = g_pGlobalState->shardTex,
+             .actorScale  = ACTOR_SCALE,
         };
 
         g_pHyprRenderer->m_renderPass.add(makeUnique<CFxPassElement>(fxData));
@@ -164,7 +220,10 @@ static int onTick(void* data) {
     auto now = std::chrono::steady_clock::now();
 
     for (auto& anim : g_animations) {
-        CBox dmg = {anim.box.x - 2, anim.box.y - 2, anim.box.width + 4, anim.box.height + 4};
+        // expand damage by actor scale so flying shards get redrawn
+        float extraW = anim.box.width * (ACTOR_SCALE - 1.0f) * 0.5f;
+        float extraH = anim.box.height * (ACTOR_SCALE - 1.0f) * 0.5f;
+        CBox  dmg    = {anim.box.x - extraW - 2, anim.box.y - extraH - 2, anim.box.width * ACTOR_SCALE + 4, anim.box.height * ACTOR_SCALE + 4};
         g_pHyprRenderer->damageBox(dmg);
     }
 
@@ -204,6 +263,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     g_pGlobalState = makeUnique<SGlobalState>();
     initShaders();
+    initShardTexture();
     g_pGlobalState->tick = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, &onTick, nullptr);
     wl_event_source_timer_update(g_pGlobalState->tick, 1);
 
@@ -220,5 +280,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
             glDeleteTextures(1, &anim.snapshotTex);
     }
     g_animations.clear();
+    if (g_pGlobalState->shardTex)
+        glDeleteTextures(1, &g_pGlobalState->shardTex);
     g_pGlobalState->shader.destroy();
 }

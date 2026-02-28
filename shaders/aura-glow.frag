@@ -1,6 +1,7 @@
 // Aura Glow (adapted from Burn My Windows GNOME extension)
-// Original: SPDX-FileCopyrightText: Justin Garza, Simon Schneegans
-// Original: SPDX-License-Identifier: GPL-3.0-or-later
+// SPDX-FileCopyrightText: Justin Garza <JGarza9788@gmail.com>
+// SPDX-FileCopyrightText: Simon Schneegans <code@simonschneegans.de>
+// SPDX-License-Identifier: GPL-3.0-or-later
 
 #version 300 es
 precision highp float;

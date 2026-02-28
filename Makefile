@@ -20,10 +20,16 @@ endef
 all: src/shader_data.inc
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $(EXTRA_FLAGS) src/main.cpp src/FxPassElement.cpp -o hyprfx.so $(PKG_CONFIG)
 
-src/shader_data.inc: shaders/default.vert shaders/aura-glow.frag
-	@echo "// auto-generated from shaders/ — do not edit" > $@
+# convert shard PNG to raw RGB at build time
+textures/shards.rgb: textures/shards.png
+	convert $< -depth 8 rgb:$@
+
+src/shader_data.inc: shaders/default.vert shaders/aura-glow.frag shaders/broken-glass.frag textures/shards.rgb
+	@echo "// auto-generated from shaders/ and textures/ — do not edit" > $@
 	$(call embed_file,VERT_DATA,shaders/default.vert,$@)
 	$(call embed_file,FRAG_DATA,shaders/aura-glow.frag,$@)
+	$(call embed_file,FRAG_BROKEN_GLASS_DATA,shaders/broken-glass.frag,$@)
+	$(call embed_file,SHARD_TEX_DATA,textures/shards.rgb,$@)
 
 clean:
-	rm -f ./hyprfx.so src/shader_data.inc
+	rm -f ./hyprfx.so src/shader_data.inc textures/shards.rgb

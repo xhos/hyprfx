@@ -9,6 +9,8 @@ class CFxPassElement : public IPassElement {
         float  progress    = 0;
         GLuint snapshotTex = 0;
         float  rounding    = 0;
+        GLuint shardTex    = 0;
+        float  actorScale  = 1.0f; // 1.0 = no expansion, 2.0 = 2x quad for broken glass
     };
 
     CFxPassElement(const SFxData& data_);

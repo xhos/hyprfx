@@ -7,7 +7,8 @@ inline HANDLE PHANDLE = nullptr;
 
 struct SGlobalState {
     SShader          shader;
-    wl_event_source* tick = nullptr;
+    wl_event_source* tick     = nullptr;
+    GLuint           shardTex = 0;
 };
 
 inline UP<SGlobalState> g_pGlobalState;

@@ -32,10 +32,16 @@ void CFxPassElement::draw(const CRegion& damage) {
     glMatrix.transpose();
     g_pGlobalState->shader.setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, glMatrix.getMatrix());
 
-    float x1 = (data.box.x - PMONITOR->m_position.x) / PMONITOR->m_size.x;
-    float y1 = (data.box.y - PMONITOR->m_position.y) / PMONITOR->m_size.y;
-    float x2 = (data.box.x - PMONITOR->m_position.x + data.box.width) / PMONITOR->m_size.x;
-    float y2 = (data.box.y - PMONITOR->m_position.y + data.box.height) / PMONITOR->m_size.y;
+    // compute expanded box for effects that render beyond window bounds
+    float scale  = data.actorScale;
+    float extraW = data.box.width * (scale - 1.0f) * 0.5f;
+    float extraH = data.box.height * (scale - 1.0f) * 0.5f;
+    CBox  renderBox = {data.box.x - extraW, data.box.y - extraH, data.box.width * scale, data.box.height * scale};
+
+    float x1 = (renderBox.x - PMONITOR->m_position.x) / PMONITOR->m_size.x;
+    float y1 = (renderBox.y - PMONITOR->m_position.y) / PMONITOR->m_size.y;
+    float x2 = (renderBox.x - PMONITOR->m_position.x + renderBox.width) / PMONITOR->m_size.x;
+    float y2 = (renderBox.y - PMONITOR->m_position.y + renderBox.height) / PMONITOR->m_size.y;
 
     // quad bounds for UV computation in vertex shader
     glUniform4f(shader.uniformLocations[SHADER_GRADIENT], x1, y1, x2, y2);
@@ -48,6 +54,38 @@ void CFxPassElement::draw(const CRegion& damage) {
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, data.snapshotTex);
         glUniform1i(shader.uniformLocations[SHADER_TEX], 0);
+    }
+
+    // bind shard texture (broken glass effect)
+    if (data.shardTex) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, data.shardTex);
+        GLint loc = glGetUniformLocation(shader.program, "shardTex");
+        if (loc >= 0)
+            glUniform1i(loc, 1);
+
+        // set broken glass specific uniforms
+        GLint seedLoc = glGetUniformLocation(shader.program, "seed");
+        if (seedLoc >= 0)
+            glUniform2f(seedLoc, 3.17f, 7.23f);
+
+        GLint epicenterLoc = glGetUniformLocation(shader.program, "epicenter");
+        if (epicenterLoc >= 0)
+            glUniform2f(epicenterLoc, 0.5f, 0.5f);
+
+        GLint shardScaleLoc = glGetUniformLocation(shader.program, "shardScale");
+        if (shardScaleLoc >= 0)
+            glUniform1f(shardScaleLoc, 1.5f);
+
+        GLint blowForceLoc = glGetUniformLocation(shader.program, "blowForce");
+        if (blowForceLoc >= 0)
+            glUniform1f(blowForceLoc, 1.5f);
+
+        GLint gravityLoc = glGetUniformLocation(shader.program, "gravity");
+        if (gravityLoc >= 0)
+            glUniform1f(gravityLoc, 3.0f);
+
+        glActiveTexture(GL_TEXTURE0);
     }
 
     float positions[] = {
