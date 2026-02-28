@@ -4,7 +4,6 @@
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/SharedDefs.hpp>
-
 #include "globals.hpp"
 #include "shaders.hpp"
 #include "FxPassElement.hpp"
@@ -12,7 +11,12 @@
 struct SWindowAnimation {
     CBox                                  box;
     std::chrono::steady_clock::time_point startTime;
-    float                                 duration = 2.0f;
+    float                                 duration    = 2.0f;
+    GLuint                                snapshotTex = 0;
+    int                                   texWidth    = 0;
+    int                                   texHeight   = 0;
+    float                                 rounding    = 0.f;
+    PHLWINDOW                             windowRef; // held until snapshot is captured
 };
 
 static std::vector<SWindowAnimation> g_animations;
@@ -65,6 +69,35 @@ void initShaders() {
     g_pGlobalState->shader.uniformLocations[SHADER_GRADIENT]   = glGetUniformLocation(prog, "quad");
     g_pGlobalState->shader.uniformLocations[SHADER_TIME]       = glGetUniformLocation(prog, "progress");
     g_pGlobalState->shader.uniformLocations[SHADER_FULL_SIZE]  = glGetUniformLocation(prog, "resolution");
+    g_pGlobalState->shader.uniformLocations[SHADER_TEX]        = glGetUniformLocation(prog, "tex");
+    g_pGlobalState->shader.uniformLocations[SHADER_RADIUS]     = glGetUniformLocation(prog, "radius");
+}
+
+static GLuint blitTextureToOwn(GLuint srcTexID, GLenum srcTarget, int w, int h) {
+    GLuint snapTex;
+    glGenTextures(1, &snapTex);
+    glBindTexture(GL_TEXTURE_2D, snapTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    GLuint readFbo, writeFbo;
+    glGenFramebuffers(1, &readFbo);
+    glGenFramebuffers(1, &writeFbo);
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, readFbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, srcTarget, srcTexID, 0);
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, writeFbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, snapTex, 0);
+
+    glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &readFbo);
+    glDeleteFramebuffers(1, &writeFbo);
+
+    return snapTex;
 }
 
 static void onCloseWindow(void* self, SCallbackInfo& info, std::any data) {
@@ -72,12 +105,14 @@ static void onCloseWindow(void* self, SCallbackInfo& info, std::any data) {
     if (!window)
         return;
 
-    auto pos  = window->m_realPosition->value();
-    auto size = window->m_realSize->value();
+    auto pos  = window->m_position;
+    auto size = window->m_size;
 
     g_animations.push_back(SWindowAnimation{
         .box       = CBox{pos.x, pos.y, size.x, size.y},
         .startTime = std::chrono::steady_clock::now(),
+        .rounding  = window->rounding(),
+        .windowRef = window,
     });
 }
 
@@ -92,12 +127,33 @@ static void onRenderStage(void* self, SCallbackInfo& info, std::any data) {
     auto now = std::chrono::steady_clock::now();
 
     for (auto& anim : g_animations) {
+        // capture snapshot on first render frame
+        if (!anim.snapshotTex && anim.windowRef) {
+            g_pHyprRenderer->makeSnapshot(anim.windowRef);
+
+            auto it = g_pHyprOpenGL->m_windowFramebuffers.find(anim.windowRef);
+            if (it != g_pHyprOpenGL->m_windowFramebuffers.end()) {
+                auto fbTex = it->second.getTexture();
+                if (fbTex && fbTex->m_texID > 0 && fbTex->m_size.x > 0) {
+                    int tw           = (int)fbTex->m_size.x;
+                    int th           = (int)fbTex->m_size.y;
+                    anim.snapshotTex = blitTextureToOwn(fbTex->m_texID, GL_TEXTURE_2D, tw, th);
+                    anim.texWidth    = tw;
+                    anim.texHeight   = th;
+                }
+            }
+
+            anim.windowRef.reset(); // release window reference
+        }
+
         float elapsed  = std::chrono::duration<float>(now - anim.startTime).count();
         float progress = std::min(elapsed / anim.duration, 1.0f);
 
         auto  fxData = CFxPassElement::SFxData{
-             .box      = anim.box,
-             .progress = progress,
+             .box         = anim.box,
+             .progress    = progress,
+             .snapshotTex = anim.snapshotTex,
+             .rounding    = anim.rounding,
         };
 
         g_pHyprRenderer->m_renderPass.add(makeUnique<CFxPassElement>(fxData));
@@ -114,7 +170,12 @@ static int onTick(void* data) {
 
     std::erase_if(g_animations, [&](const SWindowAnimation& anim) {
         float elapsed = std::chrono::duration<float>(now - anim.startTime).count();
-        return elapsed >= anim.duration;
+        if (elapsed >= anim.duration) {
+            if (anim.snapshotTex)
+                glDeleteTextures(1, &anim.snapshotTex);
+            return true;
+        }
+        return false;
     });
 
     const int TIMEOUT = g_pHyprRenderer->m_mostHzMonitor ? 1000.0 / g_pHyprRenderer->m_mostHzMonitor->m_refreshRate : 16;
@@ -154,5 +215,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     wl_event_source_remove(g_pGlobalState->tick);
     g_pHyprRenderer->m_renderPass.removeAllOfType("CFxPassElement");
+    for (auto& anim : g_animations) {
+        if (anim.snapshotTex)
+            glDeleteTextures(1, &anim.snapshotTex);
+    }
+    g_animations.clear();
     g_pGlobalState->shader.destroy();
 }

@@ -5,8 +5,10 @@
 class CFxPassElement : public IPassElement {
   public:
     struct SFxData {
-        CBox  box; // global coords
-        float progress = 0;
+        CBox   box; // global coords
+        float  progress    = 0;
+        GLuint snapshotTex = 0;
+        float  rounding    = 0;
     };
 
     CFxPassElement(const SFxData& data_);

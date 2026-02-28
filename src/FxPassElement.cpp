@@ -41,6 +41,14 @@ void CFxPassElement::draw(const CRegion& damage) {
     glUniform4f(shader.uniformLocations[SHADER_GRADIENT], x1, y1, x2, y2);
     glUniform1f(shader.uniformLocations[SHADER_TIME], data.progress);
     glUniform2f(shader.uniformLocations[SHADER_FULL_SIZE], data.box.width, data.box.height);
+    glUniform1f(shader.uniformLocations[SHADER_RADIUS], data.rounding);
+
+    // bind window snapshot texture
+    if (data.snapshotTex) {
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, data.snapshotTex);
+        glUniform1i(shader.uniformLocations[SHADER_TEX], 0);
+    }
 
     float positions[] = {
         x1, y1, x2, y1, x1, y2, x2, y2,
