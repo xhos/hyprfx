@@ -24,11 +24,13 @@ all: src/shader_data.inc
 textures/shards.rgb: textures/shards.png
 	convert $< -depth 8 rgb:$@
 
-src/shader_data.inc: shaders/default.vert shaders/aura-glow.frag shaders/broken-glass.frag textures/shards.rgb
+src/shader_data.inc: shaders/default.vert shaders/aura-glow.frag shaders/broken-glass.frag shaders/blur.frag shaders/glide.frag textures/shards.rgb
 	@echo "// auto-generated from shaders/ and textures/ — do not edit" > $@
 	$(call embed_file,VERT_DATA,shaders/default.vert,$@)
 	$(call embed_file,FRAG_DATA,shaders/aura-glow.frag,$@)
 	$(call embed_file,FRAG_BROKEN_GLASS_DATA,shaders/broken-glass.frag,$@)
+	$(call embed_file,FRAG_BLUR_DATA,shaders/blur.frag,$@)
+	$(call embed_file,FRAG_GLIDE_DATA,shaders/glide.frag,$@)
 	$(call embed_file,SHARD_TEX_DATA,textures/shards.rgb,$@)
 
 clean:

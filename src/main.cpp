@@ -11,21 +11,31 @@
 #include <hyprland/src/xwayland/XSurface.hpp>
 
 // compile-time shader selection
-#define SHADER_BROKEN_GLASS 1
 #define SHADER_AURA_GLOW    0
+#define SHADER_BROKEN_GLASS 1
+#define SHADER_BLUR         2
+#define SHADER_GLIDE        3
 #define ACTIVE_SHADER       SHADER_AURA_GLOW
 
-// actor scale for effects that render beyond window bounds
+// per-shader settings
 #if ACTIVE_SHADER == SHADER_BROKEN_GLASS
 static constexpr float ACTOR_SCALE = 2.0f;
-#else
+static constexpr float DURATION    = 0.8f;
+#elif ACTIVE_SHADER == SHADER_BLUR
 static constexpr float ACTOR_SCALE = 1.0f;
+static constexpr float DURATION    = 0.3f;
+#elif ACTIVE_SHADER == SHADER_GLIDE
+static constexpr float ACTOR_SCALE = 1.0f;
+static constexpr float DURATION    = 0.25f;
+#else // AURA_GLOW
+static constexpr float ACTOR_SCALE = 1.0f;
+static constexpr float DURATION    = 0.8f;
 #endif
 
 struct SWindowAnimation {
     CBox                                  box;
     std::chrono::steady_clock::time_point startTime;
-    float                                 duration    = 2.0f;
+    float                                 duration    = DURATION;
     GLuint                                snapshotTex = 0;
     int                                   texWidth    = 0;
     int                                   texHeight   = 0;
@@ -76,6 +86,10 @@ void initShaders() {
 
 #if ACTIVE_SHADER == SHADER_BROKEN_GLASS
     GLuint prog = createProgram(VERT, FRAG_BROKEN_GLASS);
+#elif ACTIVE_SHADER == SHADER_BLUR
+    GLuint prog = createProgram(VERT, FRAG_BLUR);
+#elif ACTIVE_SHADER == SHADER_GLIDE
+    GLuint prog = createProgram(VERT, FRAG_GLIDE);
 #else
     GLuint prog = createProgram(VERT, FRAG);
 #endif
