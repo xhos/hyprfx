@@ -1,16 +1,19 @@
 #pragma once
 
 #include <hyprland/src/render/pass/PassElement.hpp>
+#include "globals.hpp"
 
 class CFxPassElement : public IPassElement {
   public:
     struct SFxData {
-        CBox   box; // global coords
-        float  progress    = 0;
-        GLuint snapshotTex = 0;
-        float  rounding    = 0;
-        GLuint shardTex    = 0;
-        float  actorScale  = 1.0f; // 1.0 = no expansion, 2.0 = 2x quad for broken glass
+        CBox             box;
+        float            progress        = 0;
+        float            clampedProgress = 0;
+        GLuint           snapshotTex     = 0;
+        float            randomSeed      = 0;
+        float            windowW         = 0;
+        float            windowH         = 0;
+        SCompiledShader* shader          = nullptr;
     };
 
     CFxPassElement(const SFxData& data_);

@@ -2,4 +2,3 @@
 build/
 result
 .direnv/
-src/shader_data.inc
